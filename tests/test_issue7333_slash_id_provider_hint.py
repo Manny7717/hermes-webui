@@ -23,6 +23,8 @@ request path (api/routes.py) resolve via the same shared boundary:
 so exercising that boundary covers both constructions.
 """
 
+import pytest
+
 import api.config as config
 
 
@@ -241,5 +243,59 @@ def test_bare_custom_provider_slash_id_stays_bare():
         assert encoded == "x-ai/grok-4.5", (
             f"bare custom must keep bare passthrough, got {encoded!r}"
         )
+    finally:
+        _restore(old)
+
+
+def test_unknown_named_custom_slug_slash_id_stays_bare():
+    """A custom:<slug> with NO matching custom_providers[] entry must keep the
+    bare id — it is the custom-provider version of the unknown-slug negative
+    control. Routing it as @custom:missing:vendor/model would send the model
+    down a named-provider lane with no matching endpoint (maintainer review
+    on #7356)."""
+    old = _set_config(
+        provider="custom:proxy-main",
+        base_url="https://main.example/v1",
+        default="upstage/solar-pro4:free",
+        custom_providers=[
+            {
+                "name": "proxy-main",
+                "base_url": "https://main.example/v1",
+                "models": {"upstage/solar-pro4:free": {}},
+            },
+        ],
+    )
+    try:
+        encoded = config.model_with_provider_context(
+            "upstage/solar-pro4:free", "custom:missing"
+        )
+        assert encoded == "upstage/solar-pro4:free", (
+            f"unknown named custom slug must keep bare passthrough, got {encoded!r}"
+        )
+    finally:
+        _restore(old)
+
+
+def test_ambiguous_named_custom_slug_fails_closed():
+    """Two custom_providers[] entries normalizing to the same slug must fail
+    closed (AmbiguousCustomProviderError), matching the point-of-return
+    collision guard in resolve_model_provider — a slug we cannot resolve to
+    one unique endpoint must not be minted into an @custom: route."""
+    old = _set_config(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        default="upstage/solar-pro4:free",
+        custom_providers=[
+            {"name": "proxy-main", "base_url": "https://main.example/v1"},
+            {"name": "Proxy Main", "base_url": "https://other.example/v1"},
+        ],
+    )
+    # "proxy-main" and "Proxy Main" both normalize to slug "proxy-main".
+    assert config._custom_provider_slug_from_name("Proxy Main") == "custom:proxy-main"
+    try:
+        with pytest.raises(config.AmbiguousCustomProviderError):
+            config.model_with_provider_context(
+                "upstage/solar-pro4:free", "custom:proxy-main"
+            )
     finally:
         _restore(old)
