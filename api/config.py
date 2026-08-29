@@ -3311,8 +3311,22 @@ def model_with_provider_context(model_id: str, model_provider: str | None = None
 
     # For non-OpenRouter slash IDs without an explicit configured provider,
     # keep the ID intact so existing custom/proxy base_url routing and
-    # portal-provider handling remain in charge.
+    # portal-provider handling remain in charge — UNLESS the session provider
+    # is a known routable provider that differs from the profile default.
+    # Dropping the hint there lets the default provider's base_url win and
+    # 404s (e.g. a Nous portal row `upstage/solar-pro4:free` under an
+    # xai-oauth default gets sent to api.x.ai — #7333). Emit the explicit
+    # hint for known static/portal providers and named custom providers
+    # (including `custom:<slug>` stored as the session provider), and keep
+    # the bare ID only for unknown/ambiguous provider slugs (negative
+    # control) so custom/proxy base_url routing stays in charge.
     if "/" in model:
+        if (
+            provider in _PROVIDER_MODELS
+            or provider in _PROVIDER_DISPLAY
+            or provider.startswith("custom:")
+        ):
+            return f"@{provider}:{model}"
         return model
 
     return f"@{provider}:{model}"
